@@ -32,6 +32,23 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# runtime logs (keep folder via .gitkeep)
+/data/*.jsonl
+/data/*.log
+/data/submissions.jsonl
+
+# python leftovers (if any tools create them)
+__pycache__/
+.venv/
+venv/
+*.pyc
+
+# local IDE / OS
+.idea/
+.vscode/
+*.log
 
 # vercel
 .vercel
