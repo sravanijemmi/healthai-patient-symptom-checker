@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HealthAI · Symptom Assessment</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <p class="brand">HealthAI</p>
+      <h1>Preliminary guidance from the symptoms you describe.</h1>
+      <p class="hero-sub">
+        Enter how you feel. We clean common misspellings, ask a language model for
+        possible conditions, and show a clear summary you can discuss with a clinician.
+      </p>
+      <p class="hero-note">Not a diagnosis. For emergencies, call local emergency services.</p>
+    </header>
+
+    <aside id="emergencyBanner" class="emergency-banner hidden" role="alert"></aside>
+
+    <section class="workspace">
+      <div class="form-column">
+        <form id="symptomForm" class="symptom-form">
+          <label for="symptoms" class="field-label">Describe your symptoms</label>
+          <p class="field-hint">
+            Separate with commas, semicolons, or new lines. Misspellings like
+            “migrane” or “feaver” are cleaned before the LLM.
+          </p>
+          <textarea id="symptoms" name="symptoms" rows="5" maxlength="2000" required
+            placeholder="Example: fever, cough, and a sore throat for 3 days"></textarea>
+
+          <div class="optional-fields">
+            <div>
+              <label for="age">Age (optional)</label>
+              <input id="age" type="number" min="0" max="120" placeholder="e.g. 28" />
+            </div>
+            <div>
+              <label for="sex">Sex (optional)</label>
+              <select id="sex">
+                <option value="">Prefer not to say</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+                <option value="other">Other</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-meta">
+            <span id="charCount">0/2000</span>
+            <div class="example-row">
+              <button type="button" class="example-chip" data-example="feaver, migrane, and sorethrot">Try: feaver, migrane, and sorethrot</button>
+              <button type="button" class="example-chip" data-example="chestpain, short of breath, and dizzyness">Try: chestpain, short of breath…</button>
+            </div>
+          </div>
+
+          <p id="formError" class="error-banner hidden" role="alert"></p>
+          <button type="submit" class="primary-btn" id="submitBtn">Analyze symptoms</button>
+        </form>
+      </div>
+
+      <section class="results-panel" id="resultsPanel" aria-live="polite">
+        <h2>Your assessment will appear here</h2>
+        <p class="muted">Submit symptoms to see a summary and at least three possible conditions.</p>
+      </section>
+    </section>
+
+    <section class="logs-panel">
+      <div class="logs-header">
+        <div>
+          <p class="eyebrow">Structured logging</p>
+          <h2>Recent submissions</h2>
+          <p class="section-copy">Last submissions with timestamps, cleaned input, and model responses.</p>
+        </div>
+        <button type="button" class="secondary-btn" id="refreshLogs">Refresh</button>
+      </div>
+      <ul class="log-list" id="logList"></ul>
+    </section>
+
+    <footer class="site-footer">
+      <p>HealthAI · FastAPI + Groq LLM · AidenAI build round demo</p>
+    </footer>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,25 +1,24 @@
-# HealthAI — Patient Symptom Checker
+# HealthAI — Patient Symptom Checker (FastAPI)
 
-Fictional telehealth web app for the **AidenAI / LaunchBae AI Engineer build round**. Patients enter symptoms and get **possible** health-condition suggestions from an LLM (educational triage only — **not a diagnosis**, **not real patient care**).
+Fictional telehealth demo for the **AidenAI / LaunchBae AI Engineer** build round.
+Patients enter symptoms → **Python preprocessing** → **Groq LLM** → possible conditions (educational only, **not a diagnosis**).
 
-**Stack:** Next.js 15 (TypeScript) · App Router API · Groq (`openai/gpt-oss-20b`) · Zod · Vitest  
+**Stack (AI Engineer aligned):** Python · **FastAPI** · Pydantic · Groq LLM · pytest · minimal Jinja UI
 
-> We do **not** use Flask/FastAPI. The brief asks for a web app + LLM, not a specific Python framework. Zod ≈ Pydantic; Vitest ≈ pytest; `/api/*` route handlers ≈ Flask blueprints.
+> This project was rebuilt from an earlier Next.js prototype so the submission matches an **AI Engineer** profile (backend ML/LLM pipeline), not a frontend-heavy stack.
 
 ---
 
 ## Overview
 
-| Capability | Implementation |
+| Capability | Module |
 |---|---|
-| Symptom form (+ optional age/sex) | `src/components/SymptomForm.tsx` |
-| Preprocessing (visible + tested) | `src/lib/preprocess.ts` |
-| Emergency red-flag banner | `src/lib/safety.ts` |
-| LLM (≥3 conditions, JSON, retry) | `src/lib/llm.ts` |
-| Results + summary UI | `src/components/ResultsPanel.tsx` |
-| Structured logs (last ≥10) | `src/lib/logger.ts` + Recent submissions panel |
-
-**Screenshot tip for submission:** run the app, submit `feaver, migrane, and sorethrot`, capture the results panel (summary + ≥3 conditions + corrections).
+| Symptom form (+ optional age/sex) | `templates/index.html` + `static/app.js` |
+| Preprocessing | `app/preprocessing.py` + `app/dictionary.py` |
+| Emergency red flags | `app/safety.py` |
+| LLM (≥3 conditions, JSON, retry) | `app/llm/` |
+| API and orchestration | `app/main.py` + `app/service.py` |
+| Structured logs (≥10) | `app/logger.py` → `data/submissions.jsonl` |
 
 ---
 
@@ -27,205 +26,174 @@ Fictional telehealth web app for the **AidenAI / LaunchBae AI Engineer build rou
 
 ### Prerequisites
 
-- Node.js 20+
+- Python 3.10+
 - Free Groq key: [https://console.groq.com/keys](https://console.groq.com/keys)
 
 ### Steps
 
 ```bash
-git clone https://github.com/sravanijemmi/healthai.git
-cd healthai
-npm install
-copy .env.example .env.local   # Windows
-# cp .env.example .env.local   # macOS/Linux
+cd <project-directory>
+python -m venv .venv
+
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+
+pip install -r requirements.txt
+copy .env.example .env
 ```
 
-Edit `.env.local`:
+Edit `.env`:
 
 ```env
 GROQ_API_KEY=gsk_your_key_here
 LLM_MODEL=openai/gpt-oss-20b
+LLM_TIMEOUT_SECONDS=1.5
+CORS_ORIGINS=http://localhost:8000,http://127.0.0.1:8000
 ```
+
+Run the server:
 
 ```bash
-npm run dev
+uvicorn app.main:app --reload --port 8000
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
-
-Production:
-
-```bash
-npm run build
-npm start
-```
+Open [http://localhost:8000](http://localhost:8000).
 
 ---
 
-## How to run the tests
+## How to run tests
 
 ```bash
-npm test
+pytest
+pytest --cov=app --cov-report=term-missing
 ```
 
-Coverage (optional):
+Tests use a fake LLM client and do not require a Groq key. The concurrency test exercises eight simultaneous API requests with a delayed fake provider; it asserts completion under two seconds on the local test machine. This does not guarantee the same latency from the external Groq service.
 
-```bash
-npx vitest run --coverage
-```
+Latest local run: `pytest -q --basetemp <directory-on-D-drive>` — 33 passed.
 
-| Suite | What it covers |
+| Test file | Covers |
 |---|---|
-| `preprocess.test.ts` | normalize, HTML strip, split, synonyms, dedupe, cap, empty/gibberish |
-| `safety.test.ts` | emergency keyword detection |
-| `llm.test.ts` | happy path, malformed JSON → retry, double failure |
-| `logger.test.ts` | structured log shape / last-10 behavior |
-
-Tests use a **fake LLM client** — no API key required for `npm test`.
+| `tests/test_preprocessing.py` | normalization, common phrase variants, HTML, synonyms, dedupe, empty/gibberish |
+| `tests/test_safety.py` | emergency detection, including neck stiffness with fever/headache and severe headache wording |
+| `tests/test_llm.py` | schema and retries, concise prompt, medication-advice guard, Groq request options (fake client, no API key) |
+| `tests/test_api.py` | FastAPI TestClient — validation, analysis response, emergency escalation, privacy-safe logs, retention, concurrent latency |
 
 ---
 
 ## Architecture
 
 ```
-Browser (React UI)
-  │  optional age/sex + live emergency check
-  ▼
-POST /api/analyze
-  │
-  ├─ Zod request validation (422 on bad input)
-  ├─ Rate limit (per IP)
-  ├─ detectEmergency()     ← rule-based, independent of LLM
-  ├─ preprocessSymptoms()  ← clean list passed to LLM
-  ├─ cache (5 min, cleaned key)
-  ├─ analyzeSymptoms()     ← Groq JSON, temp 0.2, timeout, retry×1
-  └─ appendLog() → data/submissions.jsonl
+Browser (Jinja + vanilla JS)
+        │
+        ▼
+FastAPI POST /api/analyze
+        ├─ Pydantic request validation + per-client rate limit
+        └─ app.service.run_analysis()
+           ├─ normalize and validate symptoms
+           ├─ detect emergency red flags
+           ├─ 5-minute in-memory cache
+           ├─ Groq JSON request (1.5-second client timeout; one format retry)
+           ├─ require at least 3 validated possible conditions
+           └─ JSONL log → data/submissions.jsonl (retain newest 50)
 
-GET /api/logs → newest submissions (≥10 kept; file stores up to 50)
+GET /api/logs returns at least the newest 10 submissions.
 ```
-
-### Module map
-
-| Path | Role |
-|---|---|
-| `src/lib/preprocess.ts` | Unicode, HTML/control strip, split, synonym map, dedupe, cap 15 |
-| `src/lib/symptom-dictionary.ts` | Misspellings / slang |
-| `src/lib/safety.ts` | Emergency red flags |
-| `src/lib/llm.ts` | Prompt, timeout, retry, Zod parse |
-| `src/lib/schemas.ts` | Request + model response schemas |
-| `src/lib/logger.ts` | JSONL logging |
-| `src/lib/rate-limit.ts` | Simple in-memory limiter |
-| `src/middleware.ts` | Restricted CORS on `/api/*` |
-| `src/app/api/analyze/route.ts` | Orchestration |
-| `src/components/*` | Form, results, logs UI |
 
 ---
 
 ## Key decisions and trade-offs
 
-### Model: Groq `openai/gpt-oss-20b` (free)
+### Why FastAPI (not Next.js)
 
-- **Why:** Brief needs an LLM, not paid OpenAI. Free tier + low latency (~1s demos).
-- **Trade-off:** Rate limits; Llama IDs removed from Groq free tier (Aug 2026), so we migrated.
+- Role is **AI Engineer** → Python backend, Pydantic schemas, pytest, LLM orchestration are the signal.
+- Minimal HTML/JS only to satisfy “web application” + demo video; ML logic stays in Python.
 
-### Preprocess before the LLM
+### Model: Groq `openai/gpt-oss-20b`
 
-- **Why:** Rubric grades cleaning/standardization; dictionary is deterministic and unit-tested.
-- **Trade-off:** Finite dictionary; unknown typos may pass through (LLM can still infer).
+- Groq exposes an OpenAI-compatible API, so the project uses the maintained OpenAI Python client with a configurable model ID and timeout.
+- The model is selected for a low-friction hosted demo, not because its clinical accuracy is established. Confirm current model availability and provider terms before running the demo.
+- A one-time format retry handles malformed JSON. A schema validates urgency, likelihood, and the minimum number of conditions; it does not verify medical correctness.
 
-### Zod instead of Pydantic / Vitest instead of pytest
+### Preprocess before LLM
 
-- **Why:** Native TypeScript stack; same validation/testing job as Python tools.
-- **Trade-off:** Recruiters scanning for “pytest” won’t see that name — documented here explicitly.
+- Dictionary + phrase map is deterministic and unit-tested (rubric Must).
+- Trade-off: finite coverage of typos.
 
-### JSONL logs on disk
+### JSONL logging
 
-- **Why:** Zero infra; easy to show last ≥10 in the UI.
-- **Trade-off:** Not multi-instance safe; production would use a DB.
+- Easy to demo the latest 10 entries with no database service. The file retains 50 entries and writes are guarded against concurrent updates.
+- Original symptom wording is redacted by default; normalized symptoms and model output are retained. Set `LOG_RAW_INPUT=true` only for synthetic data and with an explicit privacy justification.
+- Trade-off: local file storage is not suitable for multi-instance deployment, durable clinical records, or high-throughput use.
 
-### Cache + low temperature (0.2)
+### Latency and concurrency
 
-- **Why:** Helps the “~2s under normal load” Could; stable JSON.
-- **Trade-off:** Cache is process-local.
+- The Groq HTTP client timeout defaults to 1.5 seconds; synchronous FastAPI routes run in the framework's thread pool, and in-memory cache/rate-limit/log updates are synchronized.
+- Automated tests verify eight simultaneous requests with a delayed fake model finish under two seconds locally. This is a deterministic application concurrency check, not a live Groq latency benchmark; provider/network time and cold starts can still exceed the target.
+- The in-memory cache and rate limiter are process-local and reset on restart. For multiple workers or instances, replace them with shared storage and run a deployment-level load test.
 
 ---
 
-## Edge cases handled
+## Edge cases
 
 | Case | Handling |
 |---|---|
-| Empty / whitespace | Client check + Zod → **422** |
-| Very long input | Cap **2000** chars; symptom list cap **15** |
-| Gibberish / non-medical | Reject with “please describe symptoms…” |
-| Emergency keywords | Banner **before and with** LLM (`safety.ts`) |
-| LLM timeout / rate limit / bad JSON | Timeout, friendly errors, **retry once** on malformed JSON |
-| Prompt injection | User text wrapped in `<user_symptoms>`; output schema validated |
-| Non-English (heuristic) | Polite “English only” message |
-| Stack traces | Never returned to the client |
+| Empty input | Pydantic / preprocess → **422** |
+| Long input | Cap 2000 chars, max 15 symptoms |
+| Gibberish | Reject with clear message |
+| Emergency keywords | Banner before/with LLM |
+| Bad LLM JSON | Retry once, then friendly error |
+| Prompt injection | `<user_symptoms>` delimiters + schema validation |
+| Rate limits / timeouts | Friendly mapped errors, no stack traces |
 
 ---
 
-## Security and correctness
+## Security
 
-| Control | Status |
-|---|---|
-| API key only in `.env.local` | Yes (`.env*` gitignored; `.env.example` committed) |
-| Input validation (Zod ≈ Pydantic) | Yes — request + LLM response |
-| CORS restricted on `/api` | Yes — `src/middleware.ts` (localhost demo origins) |
-| Rate limiting | Yes — `rate-limit.ts` |
-| No stack traces to users | Yes — `friendlyError()` |
-| Output escaping | Yes — React text nodes (no `dangerouslySetInnerHTML`) |
-| No real patient data | Demo only; logs are local JSONL, gitignored |
+- API key only in `.env` (ignored); `.env.example` contains placeholders
+- Pydantic validation on requests; CORS restricted
+- Rate limiting; no stack traces to clients
+- UI escapes output (`escapeHtml`); no real patient data
+- Raw symptom text is redacted in stored logs by default. The demo has no authentication, so do not expose `/api/logs` publicly or enter real patient data.
 
 ---
 
-## Limitations / with more time
+## Requirement coverage
 
-- Richer medical synonym graph / spell-check service  
-- Persistent DB + auth for multi-user logs  
-- Streaming LLM responses  
-- Full i18n  
-- Load testing + stricter CORS for a deployed domain  
-
----
-
-## Requirement checklist (brief)
-
-| Priority | Item | Status |
+| Priority | Requirement | Status |
 |---|---|---|
-| Must | Symptom form → conditions | Done |
-| Must | LLM ≥3 conditions | Done |
-| Must | Preprocessing | Done |
-| Must | Architecture / trade-offs docs | Done |
-| Should | Friendly results + summary | Done |
-| Should | Structured logs ≥10 | Done |
-| Could | Responsive + ~2s | Done |
-| Not needed | Auth, external health DBs, advanced analytics | Skipped on purpose |
+| Must | Symptom form → show conditions | Implemented; covered by API tests |
+| Must | LLM suggests ≥3 possible conditions | Implemented with response validation and retry for too few results; fake-provider tests, live provider not tested in CI |
+| Must | Preprocess misspellings/variations | Implemented with dictionary/phrase corrections and unit tests |
+| Must | Architecture and trade-offs documented | Documented in this README |
+| Should | Summary and readable condition results | Implemented in the results panel |
+| Should | Structured timestamped logs, at least 10 retained | Implemented; tests cover retention and privacy defaults |
+| Could | Responsive UI and under-two-second response | Responsive CSS and mocked concurrent test; live-provider latency is not guaranteed |
+
+The public GitHub repository and narrated screen-share video are submission tasks outside this codebase. The video must be recorded by the candidate with their webcam on; the demo outline below is a checklist, not a recording.
 
 ---
 
 ## AI usage
 
-| Tool | Parts touched | What I verified / changed afterward |
+| Tool | Touched | Verified / changed afterward |
 |---|---|---|
-| **Cursor (Composer / Auto)** | Scaffold, preprocess dictionary, Groq client, UI/CSS, API routes, tests, README drafts | Re-checked Must/Should/Could; switched to Groq free model after Llama 404; added emergency keywords myself in review; confirmed Zod validation, retry, and secrets stay out of git; ran `npm test` |
-| **Groq LLM (product runtime)** | Symptom → possible conditions | Prompt forbids diagnosis; schema enforced; UI shows disclaimer |
+| Cursor (Composer) | Earlier FastAPI scaffold, preprocessing, LLM client, UI, tests, and README | The current repository and tests were reviewed; implementation details are documented above. |
+| GitHub Copilot (VS Code) | Audited the rubric; updated provider request options, logging/concurrency tests, symptom phrase normalization, emergency flags, medication-advice guard, and documentation | Installed pinned dependencies; ran focused and full test suites; made live Groq smoke requests and recorded their variable latency; no clinical validation was performed. |
 
-Honest note: AI helped with boilerplate and structure; **safety keyword list**, **preprocess dictionary curation**, **prompt rules**, and **manual end-to-end browser checks** were reviewed/owned by me.
+The LLM is informational only. Human review and a real-provider smoke test remain necessary before the demo; no clinical validation was performed.
 
 ---
 
-## Demo video script (≤8 min, webcam on)
+## Demo video tips
 
-1. Form + misspellings → ≥3 conditions + summary  
-2. Show preprocessing corrections  
-3. Trigger emergency banner (`chest pain` / `can't breathe`)  
-4. Show recent logs  
-5. Code walk: `preprocess.ts` → `safety.ts` → `llm.ts` → `api/analyze`  
-6. Trade-offs (Groq free, Zod, JSONL)
+1. Show misspelled input → cleaned symptoms → ≥3 conditions
+2. Show emergency banner (`chest pain`)
+3. Show recent logs
+4. Walk `preprocessing.py` → `safety.py` → `llm/` → `service.py` → `main.py`
 
 ---
 
 ## License
 
-MIT — synthetic hiring exercise only. Not for clinical use.
+MIT — hiring exercise only. Not for clinical use.
