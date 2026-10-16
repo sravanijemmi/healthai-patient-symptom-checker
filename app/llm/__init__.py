@@ -23,20 +23,29 @@ __all__ = [
 
 _MEDICATION_ADVICE_RE = re.compile(
     r"\b(?:otc|over[ -]?the[ -]?counter|medications?|medicines?|drugs?|"
-    r"antibiotics?|antivirals?|prescriptions?|prescribe|pain relief)\b",
+    r"antibiotics?|antivirals?|prescriptions?|prescribe|pain relief|painkillers?|"
+    r"dosages?|doses?|tablets?|capsules?|\d+\s*mg)\b",
     re.IGNORECASE,
 )
 _SAFE_NEXT_STEP = "Discuss treatment options with a qualified clinician."
+_SAFE_SUMMARY = "Several possible causes can overlap; a clinician can assess your symptoms."
+_SAFE_DESCRIPTION = "This is a possible explanation that requires assessment by a clinician."
+_SAFE_REASONING = "This is a possible match based on the symptoms reported."
+
+
+def _safe_text(value: str, fallback: str) -> str:
+    return fallback if _MEDICATION_ADVICE_RE.search(value) else value
 
 
 def _normalize_condition(raw: HealthCondition) -> HealthCondition:
-    reasoning = raw.reasoning or raw.description or "Possible match based on reported symptoms."
+    reasoning = raw.reasoning or raw.description or _SAFE_REASONING
+    reasoning = _safe_text(reasoning, _SAFE_REASONING)
     description = raw.description or reasoning
+    description = _safe_text(description, _SAFE_DESCRIPTION)
     step = raw.suggested_next_step or (
         "Discuss these symptoms with a clinician if they persist or worsen."
     )
-    if _MEDICATION_ADVICE_RE.search(step):
-        step = _SAFE_NEXT_STEP
+    step = _safe_text(step, _SAFE_NEXT_STEP)
     return HealthCondition(
         name=raw.name,
         description=description,
@@ -109,7 +118,7 @@ def analyze_symptoms(
             data = _parse_model_json(result.content)
             conditions = [_normalize_condition(c) for c in data.conditions[:6]]
             return {
-                "summary": data.summary,
+                "summary": _safe_text(data.summary, _SAFE_SUMMARY),
                 "urgency": data.urgency,
                 "conditions": [c.model_dump(by_alias=True) for c in conditions],
                 "disclaimer": data.disclaimer or DISCLAIMER,

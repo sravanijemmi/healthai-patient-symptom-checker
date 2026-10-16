@@ -11,6 +11,7 @@ from app.llm import LlmClient, analyze_symptoms
 from app.logging_config import log_event
 from app.logger import append_log, create_log_id
 from app.preprocessing import preprocess_symptoms, validate_symptoms
+from app.rate_limit import check_rate_limit
 from app.safety import EmergencyCheck, detect_emergency
 
 
@@ -26,6 +27,7 @@ def run_analysis(
     age: int | None = None,
     sex: str | None = None,
     client: Optional[LlmClient] = None,
+    rate_limit_key: str | None = None,
 ) -> ServiceResult:
     """
     Orchestrates: preprocess → safety → cache/LLM → validate → log.
@@ -113,6 +115,18 @@ def run_analysis(
             model=settings.llm_model,
         )
         return ServiceResult(True, 200, result)
+
+    if rate_limit_key is not None:
+        rate = check_rate_limit(rate_limit_key)
+        if not rate.allowed:
+            return ServiceResult(
+                False,
+                429,
+                {
+                    "error": f"Too many requests. Please wait {rate.retry_after_sec}s and try again.",
+                    "retry_after_sec": rate.retry_after_sec,
+                },
+            )
 
     try:
         analysis = analyze_symptoms(preprocessed, age=age, sex=sex, client=client)

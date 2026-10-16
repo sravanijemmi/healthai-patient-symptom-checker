@@ -67,14 +67,14 @@ pytest --cov=app --cov-report=term-missing
 
 Tests use a fake LLM client and do not require a Groq key. The concurrency test exercises eight simultaneous API requests with a delayed fake provider; it asserts completion under two seconds on the local test machine. This does not guarantee the same latency from the external Groq service.
 
-Latest local run: **33 tests passed; 92% app coverage** (`pytest -q --cov=app --cov-report=term-missing`).
+Latest local run: **35 tests passed; 92% app coverage** (`pytest -q --cov=app --cov-report=term-missing`).
 
 | Test file | Covers |
 |---|---|
 | `tests/test_preprocessing.py` | normalization, common phrase variants, HTML, synonyms, dedupe, empty/gibberish |
 | `tests/test_safety.py` | emergency detection, including neck stiffness with fever/headache and severe headache wording |
 | `tests/test_llm.py` | schema and retries, concise prompt, medication-advice guard, Groq request options (fake client, no API key) |
-| `tests/test_api.py` | FastAPI TestClient — validation, analysis response, emergency escalation, privacy-safe logs, retention, concurrent latency |
+| `tests/test_api.py` | FastAPI TestClient — validation, analysis response, cache/rate-limit behavior, proxy-header handling, local-only logs, emergency escalation, retention, concurrent latency |
 
 ---
 
@@ -123,12 +123,15 @@ GET /api/logs returns at least the newest 10 submissions.
 
 - Easy to demo the latest 10 entries with no database service. The file retains 50 entries and writes are guarded against concurrent updates.
 - Original symptom wording is redacted by default; normalized symptoms and model output are retained. Set `LOG_RAW_INPUT=true` only for synthetic data and with an explicit privacy justification.
+- `GET /api/logs` is restricted to loopback clients so the demo UI works locally without exposing symptom logs to remote clients. A remote deployment needs proper access control or should disable this endpoint.
 - Trade-off: local file storage is not suitable for multi-instance deployment, durable clinical records, or high-throughput use.
 
 ### Latency and concurrency
 
-- The Groq HTTP client timeout defaults to 1.5 seconds; synchronous FastAPI routes run in the framework's thread pool, and in-memory cache/rate-limit/log updates are synchronized.
+- The Groq HTTP client timeout defaults to 1.7 seconds; synchronous FastAPI routes run in the framework's thread pool, and in-memory cache/rate-limit/log updates are synchronized. Provider rate limits apply only to cache misses, so cached results do not consume the LLM request quota.
+- Rate-limit keys use the direct socket peer address. The app ignores `X-Forwarded-For` because it is untrusted unless a deployment explicitly configures trusted proxies.
 - Automated tests verify eight simultaneous requests with a delayed fake model finish under two seconds locally. This is a deterministic application concurrency check, not a live Groq latency benchmark; provider/network time and cold starts can still exceed the target.
+- Manual live smoke sample on 2026-10-16: four distinct, sequential, uncached Groq requests completed in 1,165–1,894 ms on the local machine. This small sample is evidence of observed latency, not a load test or a guarantee.
 - The in-memory cache and rate limiter are process-local and reset on restart. For multiple workers or instances, replace them with shared storage and run a deployment-level load test.
 
 ---
@@ -151,9 +154,9 @@ GET /api/logs returns at least the newest 10 submissions.
 
 - API key only in `.env` (ignored); `.env.example` contains placeholders
 - Pydantic validation on requests; CORS restricted
-- Rate limiting; no stack traces to clients
+- Rate limiting applies to model calls; forwarded IP headers are not trusted by default
 - UI escapes output (`escapeHtml`); no real patient data
-- Raw symptom text is redacted in stored logs by default. The demo has no authentication, so do not expose `/api/logs` publicly or enter real patient data.
+- Raw symptom text is redacted in stored logs by default. `/api/logs` is limited to loopback clients. Do not expose the demo publicly or enter real patient data.
 
 ---
 

@@ -1,9 +1,12 @@
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from time import perf_counter, sleep
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi.responses import JSONResponse
+from starlette.requests import Request
 
 from app import logger, main, rate_limit, service
 from app.config import Settings
@@ -61,9 +64,43 @@ def test_analyze_gibberish():
 
 
 def test_logs_endpoint():
-    res = client.get("/api/logs")
-    assert res.status_code == 200
-    assert "logs" in res.json()
+    def make_request(host):
+        return Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/api/logs",
+                "headers": [],
+                "client": (host, 50000),
+                "server": ("127.0.0.1", 8000),
+            }
+        )
+
+    local_result = asyncio.run(main.get_logs(make_request("127.0.0.1")))
+    remote_result = asyncio.run(main.get_logs(make_request("198.51.100.10")))
+
+    assert "logs" in local_result
+    assert isinstance(remote_result, JSONResponse)
+    assert remote_result.status_code == 403
+
+
+def test_client_key_ignores_untrusted_forwarded_ip():
+    from starlette.requests import Request
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/api/analyze",
+            "headers": [(b"x-forwarded-for", b"203.0.113.99")],
+            "client": ("127.0.0.1", 50000),
+            "server": ("127.0.0.1", 8000),
+        }
+    )
+
+    assert main._client_key(request) == "127.0.0.1"
 
 
 def test_analyze_success_returns_three_conditions_and_redacts_raw_log(
@@ -98,6 +135,8 @@ def test_emergency_flag_overrides_model_urgency(monkeypatch, isolated_logs):
 def test_rate_limit_returns_retry_after(monkeypatch, isolated_logs):
     settings = Settings(rate_limit_per_minute=1)
     monkeypatch.setattr(rate_limit, "get_settings", lambda: settings)
+    monkeypatch.setattr(service, "get_cached", lambda key: None)
+    monkeypatch.setattr(service, "set_cached", lambda key, value: None)
     monkeypatch.setattr(service, "analyze_symptoms", lambda *args, **kwargs: _analysis())
 
     first = client.post("/api/analyze", json={"symptoms": "fever and cough"})
@@ -106,6 +145,20 @@ def test_rate_limit_returns_retry_after(monkeypatch, isolated_logs):
     assert first.status_code == 200
     assert second.status_code == 429
     assert int(second.headers["retry-after"]) > 0
+
+
+def test_cached_analysis_bypasses_provider_rate_limit(monkeypatch, isolated_logs):
+    settings = Settings(rate_limit_per_minute=1)
+    monkeypatch.setattr(rate_limit, "get_settings", lambda: settings)
+    monkeypatch.setattr(service, "analyze_symptoms", lambda *args, **kwargs: _analysis())
+
+    first = client.post("/api/analyze", json={"symptoms": "nausea and bloating"})
+    second = client.post("/api/analyze", json={"symptoms": "nausea and bloating"})
+
+    assert first.status_code == 200
+    assert first.json()["cached"] is False
+    assert second.status_code == 200
+    assert second.json()["cached"] is True
 
 
 def test_provider_timeout_is_mapped_to_gateway_timeout(monkeypatch, isolated_logs):

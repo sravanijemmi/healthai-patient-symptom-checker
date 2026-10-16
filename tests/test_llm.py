@@ -94,18 +94,24 @@ def test_retry_when_model_returns_fewer_than_three_conditions():
     assert client.calls == 2
 
 
-def test_medication_recommendations_are_replaced_with_clinician_guidance():
+def test_medication_advice_is_removed_from_every_model_text_field():
     response = json.loads(json.dumps(VALID))
-    response["conditions"][0]["suggestedNextStep"] = "Use OTC cold remedies."
-    response["conditions"][1]["suggestedNextStep"] = "Consider an antiviral."
+    response["summary"] = "Ask a doctor whether to use an antiviral."
+    response["conditions"][0]["description"] = "Take OTC medicine for relief."
+    response["conditions"][1]["reasoning"] = "An antibiotic may help."
+    response["conditions"][2]["suggestedNextStep"] = "Take 200 mg tablets."
     client = FakeClient([json.dumps(response)])
 
     result = analyze_symptoms(_pre(), client=client)
 
-    assert result["conditions"][0]["suggestedNextStep"] == (
-        "Discuss treatment options with a qualified clinician."
+    assert "antiviral" not in result["summary"].lower()
+    assert result["conditions"][0]["description"] == (
+        "This is a possible explanation that requires assessment by a clinician."
     )
-    assert result["conditions"][1]["suggestedNextStep"] == (
+    assert result["conditions"][1]["reasoning"] == (
+        "This is a possible match based on the symptoms reported."
+    )
+    assert result["conditions"][2]["suggestedNextStep"] == (
         "Discuss treatment options with a qualified clinician."
     )
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ipaddress import ip_address
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -11,7 +12,6 @@ from pydantic import ValidationError
 
 from app.config import get_settings
 from app.logger import read_logs
-from app.rate_limit import check_rate_limit
 from app.schemas import AnalyzeRequest, AnalyzeResponse, ErrorResponse
 from app.service import run_analysis
 
@@ -37,12 +37,18 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 
 def _client_key(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
     if request.client:
         return request.client.host
     return "local"
+
+
+def _is_loopback_request(request: Request) -> bool:
+    if request.client is None:
+        return False
+    try:
+        return ip_address(request.client.host).is_loopback
+    except ValueError:
+        return False
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -55,8 +61,13 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/api/logs")
-async def get_logs() -> dict:
+@app.get("/api/logs", response_model=None)
+async def get_logs(request: Request) -> dict | JSONResponse:
+    if not _is_loopback_request(request):
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Submission logs are available from this machine only."},
+        )
     logs = read_logs(10)
     return {"count": len(logs), "logs": logs}
 
@@ -67,18 +78,19 @@ async def get_logs() -> dict:
     responses={422: {"model": ErrorResponse}, 429: {"model": ErrorResponse}},
 )
 def analyze(request: Request, payload: AnalyzeRequest) -> AnalyzeResponse | JSONResponse:
-    rate = check_rate_limit(_client_key(request))
-    if not rate.allowed:
-        return JSONResponse(
-            status_code=429,
-            content={
-                "error": f"Too many requests. Please wait {rate.retry_after_sec}s and try again."
-            },
-            headers={"Retry-After": str(rate.retry_after_sec)},
-        )
-
-    result = run_analysis(payload.symptoms, age=payload.age, sex=payload.sex)
+    result = run_analysis(
+        payload.symptoms,
+        age=payload.age,
+        sex=payload.sex,
+        rate_limit_key=_client_key(request),
+    )
     if not result.ok:
+        if result.status_code == 429:
+            return JSONResponse(
+                status_code=429,
+                content={"error": result.payload["error"]},
+                headers={"Retry-After": str(result.payload["retry_after_sec"])},
+            )
         return JSONResponse(status_code=result.status_code, content=result.payload)
     return AnalyzeResponse(**result.payload)
 
