@@ -1,11 +1,8 @@
-# HealthAI — Patient Symptom Checker (FastAPI)
+# HealthAI — Patient Symptom Checker
 
-Fictional telehealth demo for the **AidenAI / LaunchBae AI Engineer** build round.
-Patients enter symptoms → **Python preprocessing** → **Groq LLM** → possible conditions (educational only, **not a diagnosis**).
+HealthAI is a fictional telehealth demo that standardizes reported symptoms, checks for selected emergency warning signs, and asks a hosted language model for possible conditions. Results are informational only and are **not a diagnosis**.
 
-**Stack (AI Engineer aligned):** Python · **FastAPI** · Pydantic · Groq LLM · pytest · minimal Jinja UI
-
-> This project was rebuilt from an earlier Next.js prototype so the submission matches an **AI Engineer** profile (backend ML/LLM pipeline), not a frontend-heavy stack.
+**Stack:** Python · FastAPI · Pydantic · Groq LLM · pytest · Jinja2 · vanilla JavaScript
 
 ---
 
@@ -47,7 +44,7 @@ Edit `.env`:
 ```env
 GROQ_API_KEY=gsk_your_key_here
 LLM_MODEL=openai/gpt-oss-20b
-LLM_TIMEOUT_SECONDS=1.5
+LLM_TIMEOUT_SECONDS=1.7
 CORS_ORIGINS=http://localhost:8000,http://127.0.0.1:8000
 ```
 
@@ -70,7 +67,7 @@ pytest --cov=app --cov-report=term-missing
 
 Tests use a fake LLM client and do not require a Groq key. The concurrency test exercises eight simultaneous API requests with a delayed fake provider; it asserts completion under two seconds on the local test machine. This does not guarantee the same latency from the external Groq service.
 
-Latest local run: `pytest -q --basetemp <directory-on-D-drive>` — 33 passed.
+Latest local run: **33 tests passed; 92% app coverage** (`pytest -q --cov=app --cov-report=term-missing`).
 
 | Test file | Covers |
 |---|---|
@@ -93,7 +90,7 @@ FastAPI POST /api/analyze
            ├─ normalize and validate symptoms
            ├─ detect emergency red flags
            ├─ 5-minute in-memory cache
-           ├─ Groq JSON request (1.5-second client timeout; one format retry)
+           ├─ Groq JSON request (1.7-second client timeout; one format retry)
            ├─ require at least 3 validated possible conditions
            └─ JSONL log → data/submissions.jsonl (retain newest 50)
 
@@ -106,8 +103,10 @@ GET /api/logs returns at least the newest 10 submissions.
 
 ### Why FastAPI (not Next.js)
 
-- Role is **AI Engineer** → Python backend, Pydantic schemas, pytest, LLM orchestration are the signal.
-- Minimal HTML/JS only to satisfy “web application” + demo video; ML logic stays in Python.
+- The main behavior is Python symptom normalization, safety checks, and LLM orchestration, so FastAPI keeps that pipeline in one runtime rather than adding a separate backend service.
+- Pydantic validates request and model-response contracts; FastAPI exposes a JSON API and OpenAPI schema; pytest covers the Python pipeline and endpoints.
+- Jinja2 and small vanilla-JavaScript modules provide the required browser workflow without a separate frontend build system.
+- Trade-off: the UI is intentionally simpler than a dedicated React/Next.js client, and the in-memory cache/rate limiter are suitable only for a single-process demo.
 
 ### Model: Groq `openai/gpt-oss-20b`
 
@@ -190,7 +189,7 @@ The LLM is informational only. Human review and a real-provider smoke test remai
 1. Show misspelled input → cleaned symptoms → ≥3 conditions
 2. Show emergency banner (`chest pain`)
 3. Show recent logs
-4. Walk `preprocessing.py` → `safety.py` → `llm/` → `service.py` → `main.py`
+4. Walk `app/preprocessing.py` → `app/safety.py` → `app/llm/` → `app/service.py` → `app/main.py`
 
 ---
 
